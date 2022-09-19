@@ -37,6 +37,7 @@ from t5x import models
 from t5x import partitioning
 from t5x import utils
 from typing_extensions import Protocol
+# pylint:enable=g-import-not-at-top
 
 # Automatically search for gin files relative to the T5X package.
 _DEFAULT_GIN_SEARCH_PATHS = [
@@ -197,9 +198,11 @@ def evaluate(
 
 
 if __name__ == '__main__':
+  # pylint:disable=g-import-not-at-top
   from absl import app
   from absl import flags
   import gin
+  # pylint:enable=g-import-not-at-top
 
   FLAGS = flags.FLAGS
 
