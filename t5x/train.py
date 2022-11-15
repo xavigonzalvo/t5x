@@ -32,6 +32,8 @@ os.environ['FLAX_PROFILE'] = 'true'
 os.environ['FLAX_LAZY_RNG'] = 'no'
 from absl import logging
 from clu import metric_writers
+import fiddle as fdl
+from fiddle import absl_flags
 import jax
 from jax import random
 from jax.experimental import multihost_utils
@@ -235,7 +237,8 @@ def train(
     raise ValueError(
         f'Checkpoint period ({checkpoint_period}), eval '
         f'period ({eval_period}), and GC period ({gc_period}) must all be '
-        f'multiples of eachother.')
+        'multiples of each other.'
+    )
 
   if use_hardware_rng or random_seed is None:
     logging.info(
@@ -446,7 +449,7 @@ def train(
         log_dir=model_dir,
         verify_matching_vocabs_fn=verify_matching_vocabs_fn)
     if not evaluator.eval_tasks:
-      # Skip evaluaton.
+      # Skip evaluation.
       evaluator = None
 
   if actions is None:
@@ -765,7 +768,6 @@ if __name__ == '__main__':
   flags.DEFINE_integer('process_index', None, help='Index of this process.')
 
 
-
   def main(argv: Sequence[str]):
     """Wrapper for pdb post mortems."""
     _main(argv)
@@ -775,6 +777,13 @@ if __name__ == '__main__':
     if len(argv) > 1:
       raise app.UsageError('Too many command-line arguments.')
 
+
+    if FLAGS.fdl_config_file and FLAGS.gin_file:
+      raise ValueError(
+          'Must pass only one of `--fdl_config_file` or `--gin_file`. Got: '
+          f'--fdl_config_file={FLAGS.fdl_config_file} '
+          f'--gin_file={FLAGS.gin_file}.'
+      )
 
     if FLAGS.multiprocess_gpu:
       logging.info(
@@ -790,16 +799,28 @@ if __name__ == '__main__':
 
     seqio.add_global_cache_dirs(FLAGS.seqio_additional_cache_dirs)
 
-    # Create gin-configurable version of `train`.
-    train_using_gin = gin.configurable(train)
+    if FLAGS.fdl_config_file:
+      trainer_fiddle_serialization.one_time_deserialization_setup()
+      train_cfg = absl_flags.create_buildable_from_flags(train)
+      train_using_fiddle = fdl.build(train_cfg)
+      train_using_fiddle()
+    else:
+      # Create gin-configurable version of `train`.
+      train_using_gin = gin.configurable(train)
 
-    gin_utils.parse_gin_flags(
-        # User-provided gin paths take precedence if relative paths conflict.
-        FLAGS.gin_search_paths + _DEFAULT_GIN_SEARCH_PATHS,
-        FLAGS.gin_file,
-        FLAGS.gin_bindings)
-    train_using_gin()
+      gin_utils.parse_gin_flags(
+          # User-provided gin paths take precedence if relative paths conflict.
+          FLAGS.gin_search_paths + _DEFAULT_GIN_SEARCH_PATHS,
+          FLAGS.gin_file,
+          FLAGS.gin_bindings,
+      )
+      train_using_gin()
     jax.effects_barrier()
 
 
-  gin_utils.run(main)
+  if FLAGS.fdl_config_file:
+    logging.info('Training using Fiddle.')
+    app.run(main, flags_parser=absl_flags.flags_parser)
+  else:
+    logging.info('Training using gin.')
+    gin_utils.run(main)
