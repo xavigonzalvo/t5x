@@ -138,8 +138,6 @@ class SaveCheckpointConfig:
   # Transformations to apply, in order, to the state before writing.
   state_transformation_fns: Sequence[checkpoints.SaveStateTransformationFn] = (
       dataclasses.field(default_factory=list))
-  # Enable GDA in this Checkpointer.
-  use_gda: bool = True
   # CheckpointManager implementation to use.
   checkpoint_manager_cls: checkpoints.CheckpointManagerConstructor = checkpoints.CheckpointManager
 
@@ -181,8 +179,6 @@ class RestoreCheckpointConfig:
   # be applied after the `assignment_map` transformations.
   state_transformation_fns: Sequence[
       checkpoints.RestoreStateTransformationFn] = ()
-  # Enable GDA in this Checkpointer.
-  use_gda: bool = True
   # CheckpointManager implementation to use.
   checkpoint_manager_cls: checkpoints.CheckpointManagerConstructor = checkpoints.CheckpointManager
 
@@ -391,17 +387,18 @@ class LegacyCheckpointManager(orbax.checkpoint.CheckpointManager):
   TrainState.
   """
 
-  def __init__(self,
-               *,
-               save_cfg: Optional[SaveCheckpointConfig],
-               restore_cfg: Optional[RestoreCheckpointConfig],
-               train_state_shape: train_state_lib.TrainState,
-               partitioner: partitioning.BasePartitioner,
-               ds_iter: Optional[
-                   Union[tf.data.Iterator,
-                         clu.data.dataset_iterator.DatasetIterator]] = None,
-               model_dir: Optional[str] = None,
-               use_gda: Optional[bool] = True):
+  def __init__(
+      self,
+      *,
+      save_cfg: Optional[SaveCheckpointConfig],
+      restore_cfg: Optional[RestoreCheckpointConfig],
+      train_state_shape: train_state_lib.TrainState,
+      partitioner: partitioning.BasePartitioner,
+      ds_iter: Optional[
+          Union[tf.data.Iterator, clu.data.dataset_iterator.DatasetIterator]
+      ] = None,
+      model_dir: Optional[str] = None,
+  ):
     if save_cfg is not None:
       if save_cfg.save_dataset:
         assert ds_iter is not None
@@ -412,7 +409,6 @@ class LegacyCheckpointManager(orbax.checkpoint.CheckpointManager):
           dataset_iterator=ds_iter if save_cfg.save_dataset else None,
           save_dtype=save_cfg.dtype,
           keep=save_cfg.keep,
-          use_gda=save_cfg.use_gda,
           keep_dataset_checkpoints=save_cfg.keep_dataset_checkpoints)
     else:
       save_checkpointer = None
@@ -424,8 +420,9 @@ class LegacyCheckpointManager(orbax.checkpoint.CheckpointManager):
           checkpoints_dir='',  # unused for restore
           dataset_iterator=ds_iter if restore_cfg.restore_dataset else None,
           restore_dtype=jnp.dtype(restore_cfg.dtype)
-          if restore_cfg.dtype else None,
-          use_gda=use_gda and restore_cfg.use_gda)
+          if restore_cfg.dtype
+          else None,
+      )
       strict = restore_cfg.strict
     else:
       restore_checkpointer = None
@@ -716,10 +713,14 @@ class GDADatasetIterator(clu.data.dataset_iterator.DatasetIterator):
 
 
 def prepare_train_iter(
-    train_iter: Union[tf.data.Dataset,
-                      clu.data.dataset_iterator.DatasetIterator], *,
-    use_gda: bool, partitioner, checkpoint_cfg,
-    data_layout) -> clu.data.dataset_iterator.PeekableDatasetIterator:
+    train_iter: Union[
+        tf.data.Dataset, clu.data.dataset_iterator.DatasetIterator
+    ],
+    *,
+    partitioner,
+    checkpoint_cfg,
+    data_layout,
+) -> clu.data.dataset_iterator.PeekableDatasetIterator:
   """Prepares the training input iterator."""
   if isinstance(train_iter, tf.data.Dataset):
     train_iter = clu.data.dataset_iterator.TfDatasetIterator(
@@ -731,8 +732,7 @@ def prepare_train_iter(
 
   input_shapes = jax.tree_map(lambda x: (data_layout.batch_size, *x.shape[1:]),
                               train_iter.element_spec)
-  if use_gda:
-    train_iter = GDADatasetIterator(train_iter, partitioner, input_shapes)
+  train_iter = GDADatasetIterator(train_iter, partitioner, input_shapes)
   return clu.data.dataset_iterator.PeekableDatasetIterator(train_iter)
 
 
@@ -1074,7 +1074,7 @@ class TrainStateInitializer:
           checkpoints_dir='',  # unused for restore
           dataset_iterator=ds_iter if cfg.restore_dataset else None,
           restore_dtype=jnp.dtype(cfg.dtype) if cfg.dtype else None,
-          use_gda=cfg.use_gda)
+      )
 
       from_tensorflow = gfile.exists(path + '.index')
       if from_tensorflow and cfg.state_transformation_fns:
